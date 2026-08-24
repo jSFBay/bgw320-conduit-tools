@@ -73,12 +73,12 @@ fixed it. Note the web UI field has `maxlength="2"`, but that's
 client-side only — POSTing a larger value directly (we used 7 days) is
 accepted with no server-side rejection.
 
-## The two scripts
+## The three scripts
 
 - **`bgw320_ippass.py`** — logs in (nonce + MD5 challenge, matching the
   router's own login flow) and can report or set the IP Passthrough
   target MAC. Useful standalone (`status`/`ethernet`/`wifi`
-  subcommands), and imported by the second script below for its
+  subcommands), and imported by the other two scripts for its
   login/session handling.
 - **`capture_router_log.py`** — the router's own event log buffer is
   short-lived (observed as little as ~9 minutes / ~250 entries before
@@ -86,10 +86,47 @@ accepted with no server-side rejection.
   This polls it and appends new entries to a local file, so you have a
   persistent record instead of whatever the router happens to still be
   holding at the moment you check.
+- **`bgw320_conduit_watchdog.sh`** — a periodic check (meant to be called
+  from your own health-check loop, not run standalone) that the router's
+  IP Passthrough binding actually matches the interface you're using, and
+  repairs both the router side and the local interface if they've drifted
+  apart independently — see the script's own header for why both checks
+  are needed, config variables are the same env-var pattern as the two
+  Python scripts above.
 
-Both are configured via environment variables — see each script's
-docstring. Neither embeds your router password; both read it from a
-separate local file (`BGW320_PASS_FILE`, one line, not included here).
+Both Python scripts are configured via environment variables — see each
+script's docstring. Neither embeds your router password; both read it
+from a separate local file (`BGW320_PASS_FILE`, one line, not included
+here).
+
+## bgw320_conduit_watchdog.sh — untested on the BGW620, and a real bug found while testing what we could
+
+The BGW620 is different hardware under the hood (CommScope/Vantiva, not
+the same lineage as the BGW320) — this script's router interaction is
+entirely delegated to `bgw320_ippass.py`, and whether that script's login
+flow and page structure carry over to a BGW620 is unconfirmed, not
+assumed to work.
+
+The router-interaction path itself wasn't exercised in testing — that
+needs a real BGW320. What *was* tested, using a stand-in script in place
+of `bgw320_ippass.py` to isolate it, was the local interface-repair logic
+— the part that actually touches your machine's own network state. That
+test caught a real, live bug: `networksetup -setairportpower` doesn't
+validate that the interface name it's given is actually a WiFi device —
+given an unrecognized name, it silently falls back to controlling
+whatever WiFi interface *does* exist on the system, rather than erroring.
+In testing, a deliberately-wrong interface name (standing in for a real
+one while the router-side logic was mocked out) toggled the tester's
+actual WiFi connection off and back on instead of failing loudly. It
+recovered cleanly on its own, but it's exactly the kind of thing that
+could go worse on a different machine or under different timing.
+
+Fixed: the script now confirms the configured interface actually matches
+the system's real Wi-Fi hardware port (via `networksetup
+-listallhardwareports`) before ever touching airport power, and refuses
+to act — logging it instead — if it doesn't match. Re-tested with the
+same wrong interface name afterward and confirmed it now refuses
+correctly, with the real WiFi connection genuinely untouched.
 
 ## What this isn't
 
